@@ -25,7 +25,8 @@ import Control.Exception.Safe
 import Control.Monad.Trans.Class (MonadTrans (lift))
 import Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
 import Data.Char (isSpace)
-import Data.List (intercalate, intersperse)
+import Data.List (find, inits, intercalate, tails)
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time.Clock (NominalDiffTime)
@@ -63,6 +64,7 @@ f = do
     . intercalate [""] -- Add an empty line between SRT rows
     . zipWith segmentToSrtRow [1 ..]
     . map mergeSegments
+    . concatMap (splitLongText 10 3)
     . groupByPredicate isEndOfSentence
     $ dataLines
 
@@ -153,3 +155,54 @@ segmentToSrtRow
         T.pack
           . map (\c -> if c == '.' then ',' else c)
           . formatTime defaultTimeLocale "%0H:%0M:%03ES"
+
+-- | Split a list of Segments if the text is too long(ie. length > maxWordsLength)
+-- The condtion for splitting is that the last character of the segnebt text is a comma,
+-- and the length of the segments is greater than minSplitted.
+splitLongText ::
+  -- | The maximum number of words in a segment
+  Int ->
+  -- | The minimum number of segments in a splitted segment
+  Int ->
+  -- | The list of segments to split
+  [Segment] ->
+  -- | The list of splitted segments
+  [[Segment]]
+splitLongText maxWordsLength minSplitted ss
+  | length ss < maxWordsLength = [ss]
+  | otherwise =
+      case takeElmentsByCondition isShortSegments ss of
+        ([], post) -> [post]
+        (pre, []) -> [pre]
+        (pre, post) -> pre : splitLongText maxWordsLength minSplitted post
+  where
+    isShortSegments ss' = length ss' >= minSplitted
+        && (T.last . segmentText . last $ ss') == ','
+
+-- | Split as list into two lists based on a condition.
+-- The first list contains the elements that satisfy the condition.
+-- The second one is the rest of the elements.
+--
+-- >>> takeElmentsByCondition (\xs -> length xs == 2) [1, 2, 3, 4, 5]
+-- ([1,2],[3,4,5])
+--
+-- >>> takeElmentsByCondition (\xs -> length xs == 3) [1, 2, 3]
+-- ([1,2,3],[])
+--
+-- >>> takeElmentsByCondition (\xs -> length xs == 4) [1, 2, 3]
+-- ([],[1,2,3])
+--
+-- >>> takeElmentsByCondition (\xs -> length xs == 2) []
+-- ([],[])
+takeElmentsByCondition :: ([a] -> Bool) -> [a] -> ([a], [a])
+takeElmentsByCondition p xs =
+  fromMaybe ([], xs) . find (p . fst) . partitions $ xs
+
+-- | Generate all pairs of partitions of a list
+-- A partition is a pair of two lists that together form the original list.
+--
+-- >>> partitions [1, 2, 3]
+-- [([],[1,2,3]),([1],[2,3]),([1,2],[3]),([1,2,3],[])]
+partitions :: [a] -> [([a], [a])]
+partitions =
+  zip <$> inits <*> tails
